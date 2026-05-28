@@ -70,7 +70,7 @@ dependencies {
     kapt("androidx.room:room-compiler:2.6.1")
 
     // SQLCipher Encryption
-    implementation("net.zetetic:android-database-sqlcipher:4.5.4")
+    implementation("net.zetetic:sqlcipher-android:4.5.4")
     implementation("androidx.sqlite:sqlite-ktx:2.4.0")
 
     // Android WorkManager
