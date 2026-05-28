@@ -51,24 +51,19 @@ abstract class AppDatabase : RoomDatabase() {
                 .addCallback(object : RoomDatabase.Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)
-                        // Prepopulate default envelope budget categories
+                        // Prepopulate default envelope budget categories using raw SQL on the SupportSQLiteDatabase
+                        // to avoid infinite recursion deadlock on getDatabase(context)
                         CoroutineScope(Dispatchers.IO).launch {
-                            val database = getDatabase(context)
-                            database.budgetDao().insertBudgets(
-                                listOf(
-                                    BudgetCategoryEntity("FIXED", allocatedLimit = 0.0, currentSpent = 0.0),
-                                    BudgetCategoryEntity("FLEXIBLE", allocatedLimit = 0.0, currentSpent = 0.0),
-                                    BudgetCategoryEntity("SAVINGS", allocatedLimit = 0.0, currentSpent = 0.0)
-                                )
-                            )
-                            database.savingsGoalDao().insertGoal(
-                                SavingsGoalEntity(
-                                    goalName = "Emergency Fund",
-                                    targetAmount = 50000.0,
-                                    currentAmount = 0.0,
-                                    targetDate = System.currentTimeMillis() + 31536000000L // 1 year
-                                )
-                            )
+                            try {
+                                db.execSQL("INSERT INTO budget_categories (categoryId, allocatedLimit, currentSpent) VALUES ('FIXED', 0.0, 0.0)")
+                                db.execSQL("INSERT INTO budget_categories (categoryId, allocatedLimit, currentSpent) VALUES ('FLEXIBLE', 0.0, 0.0)")
+                                db.execSQL("INSERT INTO budget_categories (categoryId, allocatedLimit, currentSpent) VALUES ('SAVINGS', 0.0, 0.0)")
+                                
+                                val targetDate = System.currentTimeMillis() + 31536000000L
+                                db.execSQL("INSERT INTO savings_goals (goalName, targetAmount, currentAmount, targetDate, isCompleted) VALUES ('Emergency Fund', 50000.0, 0.0, $targetDate, 0)")
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
                         }
                     }
                 })
