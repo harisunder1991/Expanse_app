@@ -27,10 +27,12 @@ class FinanceRepository(context: Context) {
 
     suspend fun addTransaction(
         amount: Double,
-        type: String, // "DEBIT", "CREDIT"
+        type: String, // "DEBIT", "CREDIT", "SWEEP"
         category: String, // "FIXED", "FLEXIBLE", "SAVINGS"
         description: String,
-        isAutoScraped: Boolean
+        isAutoScraped: Boolean,
+        subCategory: String = "General",
+        account: String = "Secure Bank"
     ) = withContext(Dispatchers.IO) {
         val timestamp = System.currentTimeMillis()
         val newTx = TransactionEntity(
@@ -39,7 +41,9 @@ class FinanceRepository(context: Context) {
             category = category,
             description = description,
             timestamp = timestamp,
-            isAutoScraped = isAutoScraped
+            isAutoScraped = isAutoScraped,
+            subCategory = subCategory,
+            account = account
         )
 
         // Insert primary transaction
@@ -69,7 +73,9 @@ class FinanceRepository(context: Context) {
                         category = "SAVINGS",
                         description = "Round-up Sweep ($description)",
                         timestamp = System.currentTimeMillis(),
-                        isAutoScraped = isAutoScraped
+                        isAutoScraped = isAutoScraped,
+                        subCategory = "Savings Sweep",
+                        account = account
                     )
                     transactionDao.insertTransaction(sweepTx)
 
@@ -87,6 +93,58 @@ class FinanceRepository(context: Context) {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    suspend fun deleteTransaction(transaction: TransactionEntity) = withContext(Dispatchers.IO) {
+        // Delete primary transaction from db
+        transactionDao.deleteTransaction(transaction)
+
+        val type = transaction.type
+        val amount = transaction.amount
+        val category = transaction.category
+
+        if (type == "CREDIT") {
+            // Reverse 50/30/20 splitting rules
+            val split = budgetEngine.calculateEnvelopeSplit(amount)
+            budgetDao.incrementLimit("FIXED", -split.fixedAmount)
+            budgetDao.incrementLimit("FLEXIBLE", -split.flexibleAmount)
+            budgetDao.incrementLimit("SAVINGS", -split.savingsAmount)
+        } else if (type == "DEBIT") {
+            // Reverse spent balance
+            budgetDao.incrementSpent(category, -amount)
+
+            // Reverse micro-savings sweep if it was generated
+            if (category == "FLEXIBLE") {
+                val sweepAmt = sweepEngine.calculateSweepAmount(amount)
+                if (sweepAmt > 0) {
+                    db.runInTransaction {
+                        db.openHelper.writableDatabase.execSQL(
+                            "DELETE FROM transactions WHERE type = 'SWEEP' AND description = ? AND amount = ?",
+                            arrayOf("Round-up Sweep (${transaction.description})", sweepAmt)
+                        )
+                        db.openHelper.writableDatabase.execSQL(
+                            "UPDATE budget_categories SET currentSpent = currentSpent - ? WHERE categoryId = 'FLEXIBLE'",
+                            arrayOf(sweepAmt)
+                        )
+                        db.openHelper.writableDatabase.execSQL(
+                            "UPDATE savings_goals SET currentAmount = currentAmount - ? " +
+                                    "WHERE id = (SELECT id FROM savings_goals WHERE isCompleted = 0 ORDER BY targetDate ASC LIMIT 1)",
+                            arrayOf(sweepAmt)
+                        )
+                    }
+                }
+            }
+        } else if (type == "SWEEP") {
+            // Deleting a sweep directly (rare manual deletion)
+            budgetDao.incrementSpent("FLEXIBLE", -amount)
+            db.runInTransaction {
+                db.openHelper.writableDatabase.execSQL(
+                    "UPDATE savings_goals SET currentAmount = currentAmount - ? " +
+                            "WHERE id = (SELECT id FROM savings_goals WHERE isCompleted = 0 ORDER BY targetDate ASC LIMIT 1)",
+                    arrayOf(amount)
+                )
             }
         }
     }

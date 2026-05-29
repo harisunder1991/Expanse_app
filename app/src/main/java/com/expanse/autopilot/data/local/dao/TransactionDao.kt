@@ -24,6 +24,9 @@ interface TransactionDao {
     @Query("SELECT SUM(amount) FROM transactions WHERE type = :type")
     suspend fun getSumAmountByType(type: String): Double?
 
+    @Delete
+    suspend fun deleteTransaction(transaction: TransactionEntity)
+
     @Query("DELETE FROM transactions")
     suspend fun deleteAllTransactions()
 }

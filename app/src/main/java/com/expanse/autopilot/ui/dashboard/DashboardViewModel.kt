@@ -56,7 +56,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         amount: Double,
         type: String,
         category: String,
-        description: String
+        description: String,
+        subCategory: String,
+        account: String
     ) {
         viewModelScope.launch {
             repository.addTransaction(
@@ -64,9 +66,17 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 type = type,
                 category = category,
                 description = description,
-                isAutoScraped = false
+                isAutoScraped = false,
+                subCategory = subCategory,
+                account = account
             )
             closeQuickEntry()
+        }
+    }
+
+    fun deleteTransaction(transaction: TransactionEntity) {
+        viewModelScope.launch {
+            repository.deleteTransaction(transaction)
         }
     }
 

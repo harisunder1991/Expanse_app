@@ -34,7 +34,9 @@ class SmsBroadcastReceiver : BroadcastReceiver() {
                                 type = parsed.type.name,
                                 category = category,
                                 description = parsed.merchant,
-                                isAutoScraped = true
+                                isAutoScraped = true,
+                                subCategory = parsed.subCategory,
+                                account = "Secure Bank"
                             )
                         }
                     }
