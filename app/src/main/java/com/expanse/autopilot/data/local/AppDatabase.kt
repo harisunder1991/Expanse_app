@@ -37,9 +37,12 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "expanse_secure.db"
-                ).apply {
+                )
+                .fallbackToDestructiveMigration()
+                .apply {
                     // SQLCipher Factory setup for encryption
                     try {
+                        System.loadLibrary("sqlcipher")
                         val keyManager = DatabaseKeyManager(context.applicationContext)
                         val passphrase = keyManager.getOrCreatePassphrase()
                         val factory = SupportOpenHelperFactory(passphrase)
@@ -52,18 +55,16 @@ abstract class AppDatabase : RoomDatabase() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)
                         // Prepopulate default envelope budget categories using raw SQL on the SupportSQLiteDatabase
-                        // to avoid infinite recursion deadlock on getDatabase(context)
-                        CoroutineScope(Dispatchers.IO).launch {
-                            try {
-                                db.execSQL("INSERT INTO budget_categories (categoryId, allocatedLimit, currentSpent) VALUES ('FIXED', 0.0, 0.0)")
-                                db.execSQL("INSERT INTO budget_categories (categoryId, allocatedLimit, currentSpent) VALUES ('FLEXIBLE', 0.0, 0.0)")
-                                db.execSQL("INSERT INTO budget_categories (categoryId, allocatedLimit, currentSpent) VALUES ('SAVINGS', 0.0, 0.0)")
-                                
-                                val targetDate = System.currentTimeMillis() + 31536000000L
-                                db.execSQL("INSERT INTO savings_goals (goalName, targetAmount, currentAmount, targetDate, isCompleted) VALUES ('Emergency Fund', 50000.0, 0.0, $targetDate, 0)")
-                            } catch (e: Exception) {
-                                e.printStackTrace()
-                            }
+                        // to avoid infinite recursion deadlock, running synchronously in onCreate to prevent race conditions.
+                        try {
+                            db.execSQL("INSERT INTO budget_categories (categoryId, allocatedLimit, currentSpent) VALUES ('FIXED', 0.0, 0.0)")
+                            db.execSQL("INSERT INTO budget_categories (categoryId, allocatedLimit, currentSpent) VALUES ('FLEXIBLE', 0.0, 0.0)")
+                            db.execSQL("INSERT INTO budget_categories (categoryId, allocatedLimit, currentSpent) VALUES ('SAVINGS', 0.0, 0.0)")
+                            
+                            val targetDate = System.currentTimeMillis() + 31536000000L
+                            db.execSQL("INSERT INTO savings_goals (goalName, targetAmount, currentAmount, targetDate, isCompleted) VALUES ('Emergency Fund', 50000.0, 0.0, $targetDate, 0)")
+                        } catch (e: Exception) {
+                            e.printStackTrace()
                         }
                     }
                 })
