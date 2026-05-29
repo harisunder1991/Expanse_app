@@ -2,6 +2,7 @@ package com.expanse.autopilot.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -22,7 +23,7 @@ import com.expanse.autopilot.ui.theme.EmeraldNeon
 import com.expanse.autopilot.ui.theme.PurpleNeon
 import com.expanse.autopilot.ui.theme.TextWhite
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun QuickExpenseDialog(
     onDismiss: () -> Unit,
