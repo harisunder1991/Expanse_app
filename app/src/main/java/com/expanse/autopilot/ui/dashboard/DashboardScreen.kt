@@ -17,7 +17,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,14 +34,22 @@ enum class DashboardTab {
     TRANSACTIONS, STATISTICS, AUTOPILOT, SETTINGS
 }
 
-enum class Period {
-    DAILY, WEEKLY, MONTHLY, YEARLY
-}
-
 data class CategoryStat(
     val categoryName: String,
     val amount: Double,
     val percentage: Double
+)
+
+data class MonthlyBudget(
+    val fixedLimit: Double,
+    val fixedSpent: Double,
+    val fixedRemaining: Double,
+    val flexibleLimit: Double,
+    val flexibleSpent: Double,
+    val flexibleRemaining: Double,
+    val savingsLimit: Double,
+    val savingsSpent: Double,
+    val savingsRemaining: Double
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -53,11 +60,49 @@ fun DashboardScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     var currentTab by remember { mutableStateOf(DashboardTab.TRANSACTIONS) }
-    var currentPeriod by remember { mutableStateOf(Period.DAILY) }
+    
+    // Store selected month (default to current month)
+    var selectedMonth by remember { mutableStateOf(Calendar.getInstance()) }
 
     var isAddingGoalOpen by remember { mutableStateOf(false) }
     var newGoalName by remember { mutableStateOf("") }
     var newGoalTarget by remember { mutableStateOf("") }
+
+    // Transaction delete confirmation state
+    var transactionToDelete by remember { mutableStateOf<TransactionEntity?>(null) }
+
+    // Filter transactions for the selected month
+    val filteredTransactions = remember(state.transactions, selectedMonth) {
+        state.transactions.filter { tx ->
+            val txCal = Calendar.getInstance().apply { timeInMillis = tx.timestamp }
+            txCal.get(Calendar.MONTH) == selectedMonth.get(Calendar.MONTH) &&
+            txCal.get(Calendar.YEAR) == selectedMonth.get(Calendar.YEAR)
+        }
+    }
+
+    // Dynamic Monthly Budget Calculation
+    val monthlyBudget = remember(filteredTransactions) {
+        val totalIncome = filteredTransactions.filter { it.type == "CREDIT" }.sumOf { it.amount }
+        val fixedLimit = totalIncome * 0.50
+        val flexibleLimit = totalIncome * 0.30
+        val savingsLimit = totalIncome * 0.20
+
+        val fixedSpent = filteredTransactions.filter { it.type == "DEBIT" && it.category == "FIXED" }.sumOf { it.amount }
+        val flexibleSpent = filteredTransactions.filter { it.type == "DEBIT" && it.category == "FLEXIBLE" }.sumOf { it.amount }
+        val savingsSpent = filteredTransactions.filter { it.type == "DEBIT" && it.category == "SAVINGS" }.sumOf { it.amount }
+
+        MonthlyBudget(
+            fixedLimit = fixedLimit,
+            fixedSpent = fixedSpent,
+            fixedRemaining = fixedLimit - fixedSpent,
+            flexibleLimit = flexibleLimit,
+            flexibleSpent = flexibleSpent,
+            flexibleRemaining = flexibleLimit - flexibleSpent,
+            savingsLimit = savingsLimit,
+            savingsSpent = savingsSpent,
+            savingsRemaining = savingsLimit - savingsSpent
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -111,7 +156,7 @@ fun DashboardScreen(
                 NavigationBarItem(
                     selected = currentTab == DashboardTab.STATISTICS,
                     onClick = { currentTab = DashboardTab.STATISTICS },
-                    icon = { Icon(Icons.Default.PlayArrow, contentDescription = "Stats") }, // standard playarrow as custom wedge representation
+                    icon = { Icon(Icons.Default.PlayArrow, contentDescription = "Stats") },
                     label = { Text("Stats", fontSize = 11.sp) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = PurpleNeon,
@@ -175,27 +220,26 @@ fun DashboardScreen(
                 )
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Render Period Filter Toggle (Daily / Weekly / Monthly / Yearly) for Trans & Stats Tab
-                if (currentTab == DashboardTab.TRANSACTIONS || currentTab == DashboardTab.STATISTICS) {
-                    PeriodFilterBar(
-                        selectedPeriod = currentPeriod,
-                        onPeriodSelected = { currentPeriod = it }
+                // Month selector navigation at the top of Ledger, Stats and Auto-Pilot
+                if (currentTab != DashboardTab.SETTINGS) {
+                    MonthSelector(
+                        selectedMonth = selectedMonth,
+                        onMonthChanged = { selectedMonth = it }
                     )
                 }
 
                 when (currentTab) {
                     DashboardTab.TRANSACTIONS -> LedgerTab(
-                        transactions = state.transactions,
-                        period = currentPeriod,
-                        onDelete = { viewModel.deleteTransaction(it) },
+                        transactions = filteredTransactions,
+                        onDeleteRequest = { transactionToDelete = it },
                         onAddManual = { viewModel.openQuickEntry() }
                     )
                     DashboardTab.STATISTICS -> StatsTab(
-                        transactions = state.transactions,
-                        period = currentPeriod
+                        transactions = filteredTransactions
                     )
                     DashboardTab.AUTOPILOT -> AutoPilotTab(
-                        state = state,
+                        monthlyBudget = monthlyBudget,
+                        activeGoals = state.activeGoals,
                         onGoalClick = { isAddingGoalOpen = true }
                     )
                     DashboardTab.SETTINGS -> SettingsTab(
@@ -208,8 +252,19 @@ fun DashboardScreen(
             if (state.isQuickEntryOpen) {
                 QuickExpenseDialog(
                     onDismiss = { viewModel.closeQuickEntry() },
-                    onSave = { amount, type, category, desc, subCat, acc ->
-                        viewModel.addManualTransaction(amount, type, category, desc, subCat, acc)
+                    onSave = { amount, type, category, desc, subCat, acc, timestamp ->
+                        viewModel.addManualTransaction(amount, type, category, desc, subCat, acc, timestamp)
+                    }
+                )
+            }
+
+            // Delete Confirmation Alert Dialog
+            transactionToDelete?.let { tx ->
+                DeleteConfirmationDialog(
+                    onDismiss = { transactionToDelete = null },
+                    onConfirm = {
+                        viewModel.deleteTransaction(tx)
+                        transactionToDelete = null
                     }
                 )
             }
@@ -291,36 +346,48 @@ fun DashboardScreen(
 }
 
 @Composable
-fun PeriodFilterBar(
-    selectedPeriod: Period,
-    onPeriodSelected: (Period) -> Unit
+fun MonthSelector(
+    selectedMonth: Calendar,
+    onMonthChanged: (Calendar) -> Unit
 ) {
+    val monthFormat = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 8.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .padding(horizontal = 20.dp, vertical = 12.dp)
+            .clip(RoundedCornerShape(16.dp))
             .background(GlassSurface)
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+            .border(0.5.dp, Color(0x15FFFFFF), RoundedCornerShape(16.dp))
+            .padding(vertical = 4.dp, horizontal = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Period.values().forEach { period ->
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (period == selectedPeriod) PurpleNeon else Color.Transparent)
-                    .clickable { onPeriodSelected(period) }
-                    .padding(vertical = 8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = period.name.replaceFirstChar { it.uppercase() },
-                    color = TextWhite,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
-                )
+        IconButton(onClick = {
+            val newCal = Calendar.getInstance().apply {
+                timeInMillis = selectedMonth.timeInMillis
+                add(Calendar.MONTH, -1)
             }
+            onMonthChanged(newCal)
+        }) {
+            Icon(Icons.Default.ArrowBack, contentDescription = "Previous Month", tint = TextWhite)
+        }
+
+        Text(
+            text = monthFormat.format(selectedMonth.time).uppercase(),
+            color = TextWhite,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 1.5.sp
+        )
+
+        IconButton(onClick = {
+            val newCal = Calendar.getInstance().apply {
+                timeInMillis = selectedMonth.timeInMillis
+                add(Calendar.MONTH, 1)
+            }
+            onMonthChanged(newCal)
+        }) {
+            Icon(Icons.Default.ArrowForward, contentDescription = "Next Month", tint = TextWhite)
         }
     }
 }
@@ -328,20 +395,12 @@ fun PeriodFilterBar(
 @Composable
 fun LedgerTab(
     transactions: List<TransactionEntity>,
-    period: Period,
-    onDelete: (TransactionEntity) -> Unit,
+    onDeleteRequest: (TransactionEntity) -> Unit,
     onAddManual: () -> Unit
 ) {
-    // 1. Filter and group transactions based on selected period
-    val grouped = remember(transactions, period) {
-        val sdf = SimpleDateFormat(
-            when (period) {
-                Period.DAILY -> "dd MMM yyyy (EEE)"
-                Period.WEEKLY -> "'Week' w, yyyy"
-                Period.MONTHLY -> "MMMM yyyy"
-                Period.YEARLY -> "yyyy"
-            }, Locale.getDefault()
-        )
+    // Group transactions by day format: "dd MMM yyyy (EEE)"
+    val grouped = remember(transactions) {
+        val sdf = SimpleDateFormat("dd MMM yyyy (EEE)", Locale.getDefault())
         transactions.groupBy { sdf.format(Date(it.timestamp)) }
     }
 
@@ -354,24 +413,24 @@ fun LedgerTab(
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = "Encrypted Ledger Empty",
+                    text = "No Transactions Found",
                     color = TextWhite,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    fontSize = 17.sp,
+                    modifier = Modifier.padding(bottom = 6.dp)
                 )
                 Text(
-                    text = "Any manually entered transactions or bank UPI SMS triggers will automatically show here.",
+                    text = "No entries match the selected month. Add manual entries or receive bank alerts to populate the ledger.",
                     color = TextGrey,
                     fontSize = 13.sp,
-                    modifier = Modifier.padding(bottom = 24.dp),
+                    modifier = Modifier.padding(bottom = 20.dp),
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
                 Button(
                     onClick = onAddManual,
                     colors = ButtonDefaults.buttonColors(containerColor = PurpleNeon)
                 ) {
-                    Text("Add Entry Now", color = TextWhite)
+                    Text("Add Transaction", color = TextWhite)
                 }
             }
         }
@@ -389,7 +448,7 @@ fun LedgerTab(
             grouped.forEach { (dateHeader, txsInGroup) ->
                 item {
                     val groupIncome = txsInGroup.filter { it.type == "CREDIT" }.sumOf { it.amount }
-                    val groupExpense = txsInGroup.filter { it.type == "DEBIT" || it.type == "SWEEP" }.sumOf { it.amount }
+                    val groupExpense = txsInGroup.filter { it.type == "DEBIT" }.sumOf { it.amount }
 
                     Column(
                         modifier = Modifier
@@ -399,7 +458,7 @@ fun LedgerTab(
                             .border(0.5.dp, Color(0x10FFFFFF), RoundedCornerShape(16.dp))
                             .padding(12.dp)
                     ) {
-                        // Date header row with daily sub-totals
+                        // Header for each day
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -434,12 +493,12 @@ fun LedgerTab(
                             }
                         }
 
-                        // Transaction List Items for this date
+                        // Render each item
                         Column(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             txsInGroup.forEach { tx ->
-                                LedgerRowItem(transaction = tx, onDelete = { onDelete(tx) })
+                                LedgerRowItem(transaction = tx, onDelete = { onDeleteRequest(tx) })
                             }
                         }
                     }
@@ -459,12 +518,7 @@ fun LedgerRowItem(
     onDelete: () -> Unit
 ) {
     val isCredit = transaction.type == "CREDIT"
-    val isSweep = transaction.type == "SWEEP"
-    val colorAccent = when {
-        isSweep -> AmberNeon
-        isCredit -> EmeraldNeon
-        else -> PurpleNeon
-    }
+    val colorAccent = if (isCredit) EmeraldNeon else PurpleNeon
 
     Row(
         modifier = Modifier
@@ -489,12 +543,12 @@ fun LedgerRowItem(
                 Icon(
                     imageVector = when {
                         transaction.isAutoScraped -> Icons.Default.MailOutline
-                        transaction.subCategory == "Food" -> Icons.Default.ShoppingCart // cart representative for food/shopping
-                        transaction.subCategory == "Travel" -> Icons.Default.PlayArrow // directional icon
+                        transaction.subCategory == "Food" -> Icons.Default.ShoppingCart
+                        transaction.subCategory == "Travel" -> Icons.Default.PlayArrow
                         transaction.subCategory == "Bills" -> Icons.Default.Star
                         else -> Icons.Default.Edit
                     },
-                    contentDescription = "Category Icon",
+                    contentDescription = "Icon",
                     tint = colorAccent,
                     modifier = Modifier.size(16.dp)
                 )
@@ -511,7 +565,6 @@ fun LedgerRowItem(
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    // Account badge
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
@@ -561,32 +614,13 @@ fun LedgerRowItem(
 
 @Composable
 fun StatsTab(
-    transactions: List<TransactionEntity>,
-    period: Period
+    transactions: List<TransactionEntity>
 ) {
-    // 1. Filter by time period
-    val filteredTxs = remember(transactions, period) {
-        val now = System.currentTimeMillis()
-        val calendar = Calendar.getInstance()
-        calendar.timeInMillis = now
+    val totalIncome = transactions.filter { it.type == "CREDIT" }.sumOf { it.amount }
+    val totalExpense = transactions.filter { it.type == "DEBIT" }.sumOf { it.amount }
 
-        transactions.filter {
-            val txCal = Calendar.getInstance()
-            txCal.timeInMillis = it.timestamp
-            when (period) {
-                Period.DAILY -> calendar.get(Calendar.DAY_OF_YEAR) == txCal.get(Calendar.DAY_OF_YEAR) && calendar.get(Calendar.YEAR) == txCal.get(Calendar.YEAR)
-                Period.WEEKLY -> calendar.get(Calendar.WEEK_OF_YEAR) == txCal.get(Calendar.WEEK_OF_YEAR) && calendar.get(Calendar.YEAR) == txCal.get(Calendar.YEAR)
-                Period.MONTHLY -> calendar.get(Calendar.MONTH) == txCal.get(Calendar.MONTH) && calendar.get(Calendar.YEAR) == txCal.get(Calendar.YEAR)
-                Period.YEARLY -> calendar.get(Calendar.YEAR) == txCal.get(Calendar.YEAR)
-            }
-        }
-    }
-
-    val totalIncome = filteredTxs.filter { it.type == "CREDIT" }.sumOf { it.amount }
-    val totalExpense = filteredTxs.filter { it.type == "DEBIT" || it.type == "SWEEP" }.sumOf { it.amount }
-
-    val categoryStats = remember(filteredTxs) {
-        val expenses = filteredTxs.filter { it.type == "DEBIT" || it.type == "SWEEP" }
+    val categoryStats = remember(transactions) {
+        val expenses = transactions.filter { it.type == "DEBIT" }
         val sum = expenses.sumOf { it.amount }
         expenses.groupBy { it.subCategory }
             .map { (cat, txList) ->
@@ -725,14 +759,10 @@ fun StatsTab(
 
 @Composable
 fun AutoPilotTab(
-    state: DashboardState,
+    monthlyBudget: MonthlyBudget,
+    activeGoals: List<SavingsGoalEntity>,
     onGoalClick: () -> Unit
 ) {
-    val flexibleBudget = state.budgets.find { it.categoryId == "FLEXIBLE" }
-    val remainingFlexible = flexibleBudget?.remaining ?: 0.0
-    val totalFlexibleLimit = flexibleBudget?.allocatedLimit ?: 0.0
-    val flexibleSpent = flexibleBudget?.currentSpent ?: 0.0
-
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -745,9 +775,9 @@ fun AutoPilotTab(
 
         item {
             SafeToSpendCard(
-                remaining = remainingFlexible,
-                limit = totalFlexibleLimit,
-                spent = flexibleSpent
+                remaining = monthlyBudget.flexibleRemaining,
+                limit = monthlyBudget.flexibleLimit,
+                spent = monthlyBudget.flexibleSpent
             )
         }
 
@@ -775,7 +805,7 @@ fun AutoPilotTab(
         }
 
         item {
-            SavingsProgressList(goals = state.activeGoals)
+            SavingsProgressList(goals = activeGoals)
         }
 
         item {
@@ -872,4 +902,44 @@ fun SettingsTab(
             Spacer(modifier = Modifier.height(80.dp))
         }
     }
+}
+
+@Composable
+fun DeleteConfirmationDialog(
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Delete Transaction?",
+                color = TextWhite,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp
+            )
+        },
+        text = {
+            Text(
+                text = "Are you sure you want to permanently delete this transaction? This will automatically reverse all budget allocations.",
+                color = TextGrey,
+                fontSize = 14.sp
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+            ) {
+                Text("Delete", color = TextWhite)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = TextWhite.copy(alpha = 0.6f))
+            }
+        },
+        containerColor = DarkBg,
+        shape = RoundedCornerShape(20.dp)
+    )
 }

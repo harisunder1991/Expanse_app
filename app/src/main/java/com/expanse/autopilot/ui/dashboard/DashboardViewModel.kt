@@ -59,7 +59,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         category: String,
         description: String,
         subCategory: String,
-        account: String
+        account: String,
+        timestamp: Long
     ) {
         viewModelScope.launch {
             repository.addTransaction(
@@ -69,7 +70,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 description = description,
                 isAutoScraped = false,
                 subCategory = subCategory,
-                account = account
+                account = account,
+                timestamp = timestamp
             )
             closeQuickEntry()
         }

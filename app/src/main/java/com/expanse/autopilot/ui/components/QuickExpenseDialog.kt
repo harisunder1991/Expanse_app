@@ -1,6 +1,8 @@
 package com.expanse.autopilot.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.rememberScrollState
@@ -22,12 +24,16 @@ import com.expanse.autopilot.ui.theme.DarkBg
 import com.expanse.autopilot.ui.theme.EmeraldNeon
 import com.expanse.autopilot.ui.theme.PurpleNeon
 import com.expanse.autopilot.ui.theme.TextWhite
+import com.expanse.autopilot.ui.theme.GlassSurface
+import com.expanse.autopilot.ui.theme.TextGrey
+import java.text.SimpleDateFormat
+import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun QuickExpenseDialog(
     onDismiss: () -> Unit,
-    onSave: (amount: Double, type: String, category: String, description: String, subCategory: String, account: String) -> Unit
+    onSave: (amount: Double, type: String, category: String, description: String, subCategory: String, account: String, timestamp: Long) -> Unit
 ) {
     var amount by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
@@ -35,6 +41,12 @@ fun QuickExpenseDialog(
     var selectedCategory by remember { mutableStateOf("FLEXIBLE") } // "FIXED", "FLEXIBLE", "SAVINGS"
     var selectedSubCategory by remember { mutableStateOf("General") } // "Food", "Shopping", "Travel", "Bills", "Entertainment", "General"
     var selectedAccount by remember { mutableStateOf("Secure Bank") } // "Cash", "Secure Bank", "Card"
+    
+    // Date selection state
+    var selectedDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    
+    val dateFormatter = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
 
     Dialog(onDismissRequest = onDismiss) {
         Box(
@@ -81,6 +93,43 @@ fun QuickExpenseDialog(
                         modifier = Modifier.weight(1f)
                     ) {
                         Text(text = "Credit (Income)", color = TextWhite, fontSize = 12.sp)
+                    }
+                }
+
+                // Date Selection Row
+                Text(
+                    text = "Date of transaction",
+                    color = TextWhite,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(GlassSurface)
+                        .border(0.5.dp, Color(0x15FFFFFF), RoundedCornerShape(12.dp))
+                        .clickable { showDatePicker = true }
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = dateFormatter.format(Date(selectedDateMillis)),
+                            color = TextWhite,
+                            fontSize = 14.sp
+                        )
+                        Text(
+                            text = "Change",
+                            color = PurpleNeon,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
 
@@ -233,7 +282,8 @@ fun QuickExpenseDialog(
                                     if (isDebit) selectedCategory else "FIXED",
                                     description,
                                     if (isDebit) selectedSubCategory else "Salary",
-                                    selectedAccount
+                                    selectedAccount,
+                                    selectedDateMillis
                                 )
                             }
                         },
@@ -243,6 +293,37 @@ fun QuickExpenseDialog(
                     }
                 }
             }
+        }
+    }
+
+    // Material 3 Date Picker Dialog
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = selectedDateMillis)
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    selectedDateMillis = datePickerState.selectedDateMillis ?: selectedDateMillis
+                    showDatePicker = false
+                }) {
+                    Text("OK", color = PurpleNeon)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text("Cancel", color = TextWhite.copy(alpha = 0.6f))
+                }
+            }
+        ) {
+            DatePicker(
+                state = datePickerState,
+                colors = DatePickerDefaults.colors(
+                    selectedDayContainerColor = PurpleNeon,
+                    selectedDayContentColor = TextWhite,
+                    todayContentColor = PurpleNeon,
+                    todayDateBorderColor = PurpleNeon
+                )
+            )
         }
     }
 }

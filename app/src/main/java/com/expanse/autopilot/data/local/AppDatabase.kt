@@ -15,10 +15,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
+import androidx.room.migration.Migration
 
 @Database(
     entities = [TransactionEntity::class, BudgetCategoryEntity::class, SavingsGoalEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -33,11 +34,24 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
+                val MIGRATION_1_2 = object : Migration(1, 2) {
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        // Check if columns already exist (in case of dev inconsistencies)
+                        try {
+                            db.execSQL("ALTER TABLE transactions ADD COLUMN subCategory TEXT NOT NULL DEFAULT 'General'")
+                        } catch (e: Exception) { e.printStackTrace() }
+                        try {
+                            db.execSQL("ALTER TABLE transactions ADD COLUMN account TEXT NOT NULL DEFAULT 'Secure Bank'")
+                        } catch (e: Exception) { e.printStackTrace() }
+                    }
+                }
+
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "expanse_secure.db"
                 )
+                .addMigrations(MIGRATION_1_2)
                 .fallbackToDestructiveMigration()
                 .apply {
                     // SQLCipher Factory setup for encryption
